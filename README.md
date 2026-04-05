@@ -60,6 +60,17 @@ npm run dev
 - Web app: [http://localhost:3001](http://localhost:3001)
 - API server: [http://localhost:3000](http://localhost:3000)
 
+### Using the Transcript Feature
+
+1. Navigate to `/recorder` in the web app
+2. Click **"Record"** to start recording audio
+3. Click **"Stop"** when finished
+4. Click **"Transcribe"** to process the audio chunks
+5. View the full transcript with timestamps
+6. Copy text or download as SRT subtitle file
+
+See [TRANSCRIPT_FEATURE.md](TRANSCRIPT_FEATURE.md) for detailed usage guide.
+
 ## Load Testing
 
 Target: **300,000 requests** to validate the chunking pipeline under heavy load.
@@ -78,9 +89,9 @@ export const options = {
   scenarios: {
     chunk_uploads: {
       executor: "constant-arrival-rate",
-      rate: 5000,           // 5,000 req/s
+      rate: 5000, // 5,000 req/s
       timeUnit: "1s",
-      duration: "1m",       // → 300K requests in 60s
+      duration: "1m", // → 300K requests in 60s
       preAllocatedVUs: 500,
       maxVUs: 1000,
     },

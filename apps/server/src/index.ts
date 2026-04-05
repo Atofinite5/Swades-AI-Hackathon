@@ -2,6 +2,7 @@ import { env } from "@my-better-t-app/env/server";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { logger } from "hono/logger";
+import { transcribeApp } from "./transcribe";
 
 const app = new Hono();
 
@@ -9,13 +10,13 @@ app.use(logger());
 app.use(
   "/*",
   cors({
-    origin: env.CORS_ORIGIN,
     allowMethods: ["GET", "POST", "OPTIONS"],
+    origin: env.CORS_ORIGIN,
   }),
 );
 
-app.get("/", (c) => {
-  return c.text("OK");
-});
+app.get("/", (c) => c.text("OK"));
+
+app.route("/transcribe", transcribeApp);
 
 export default app;
