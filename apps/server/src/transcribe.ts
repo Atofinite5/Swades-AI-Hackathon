@@ -181,7 +181,7 @@ function mergeWavBuffers(buffers: ArrayBuffer[]): ArrayBuffer {
       const sample = pcm[i];
       if (sample !== undefined) {
         const s = Math.max(-1, Math.min(1, sample));
-        outInt16[i] = s < 0 ? (s * 0x80_00) | 0 : (s * 0x7F_FF) | 0;
+        outInt16[i] = s < 0 ? (s * 0x80_00) | 0 : (s * 0x7f_ff) | 0;
       }
     }
     uint8.set(new Uint8Array(outInt16.buffer), offset);
@@ -204,9 +204,10 @@ export interface TranscriptionOutput {
   segments: TranscriptionSegment[];
 }
 
-async function transcribeWithGroq(
+export async function transcribeWithGroq(
   audioBuffer: ArrayBuffer,
   fileName: string,
+  attempt = 0,
 ): Promise<TranscriptionOutput> {
   const formData = new FormData();
   const audioBlob = new Blob([audioBuffer], { type: "audio/wav" });
@@ -218,9 +219,6 @@ async function transcribeWithGroq(
   formData.append("temperature", "0"); // Enforced temperature=0.0
   formData.append("prompt", ENGLISH_CONTEXT_PROMPT);
 
-  // Add production-grade model params if supported by the provider
-  // formData.append("beam_size", "5");
-
   const response = await fetch(GROQ_API_URL, {
     body: formData,
     headers: {
@@ -228,6 +226,15 @@ async function transcribeWithGroq(
     },
     method: "POST",
   });
+
+  // 429 — rate limited: respect Retry-After header, retry up to 2 more times
+  if (response.status === 429 && attempt < 2) {
+    const raw = parseInt(response.headers.get("retry-after") ?? "15", 10);
+    const retryAfterSec = Number.isNaN(raw) ? 15 : Math.max(1, Math.min(raw, 60));
+    console.warn(`[Groq] Rate limited. Retrying in ${retryAfterSec}s (attempt ${attempt + 1}/3)`);
+    await new Promise((r) => setTimeout(r, retryAfterSec * 1000));
+    return transcribeWithGroq(audioBuffer, fileName, attempt + 1);
+  }
 
   if (!response.ok) {
     const errorText = await response.text();

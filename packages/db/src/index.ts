@@ -3,8 +3,11 @@ import { drizzle } from "drizzle-orm/node-postgres";
 
 import * as schema from "./schema";
 
+export * from "./schema";
+
 export function createDb() {
-  return drizzle(env.DATABASE_URL, { schema });
+  const url = env.DATABASE_URL ?? "postgresql://postgres:password@localhost:5432/my-better-t-app";
+  return drizzle(url, { schema });
 }
 
 export const db = createDb();

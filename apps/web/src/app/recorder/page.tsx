@@ -1,7 +1,18 @@
 "use client";
 
-import { useCallback, useRef, useState } from "react";
-import { Download, Mic, Pause, Play, Square, Trash2, FileText, Loader2 } from "lucide-react";
+import { useCallback } from "react";
+import {
+  CheckCircle2,
+  Download,
+  Loader2,
+  Mic,
+  Pause,
+  Play,
+  RefreshCw,
+  Square,
+  Trash2,
+  XCircle,
+} from "lucide-react";
 
 import { Button } from "@my-better-t-app/ui/components/button";
 import {
@@ -12,115 +23,112 @@ import {
   CardTitle,
 } from "@my-better-t-app/ui/components/card";
 import { LiveWaveform } from "@/components/ui/live-waveform";
-import { useRecorder } from "@/hooks/use-recorder";
-import { useTranscription } from "@/hooks/use-transcription";
-import type { WavChunk } from "@/hooks/use-recorder";
+import { useOpfsRecorder } from "@/hooks/use-opfs-recorder";
+import type { ChunkMeta } from "@/hooks/use-opfs-recorder";
 
-function formatTime(seconds: number) {
-  const m = Math.floor(seconds / 60);
-  const s = Math.floor(seconds % 60);
-  const ms = Math.floor((seconds % 1) * 10);
-  return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}.${ms}`;
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+function formatTime(s: number) {
+  const m = Math.floor(s / 60);
+  const sec = Math.floor(s % 60);
+  const ms = Math.floor((s % 1) * 10);
+  return `${String(m).padStart(2, "0")}:${String(sec).padStart(2, "0")}.${ms}`;
 }
 
-function formatDuration(seconds: number) {
-  return `${seconds.toFixed(1)}s`;
+function StatusIcon({ status }: { status: ChunkMeta["uploadStatus"] }) {
+  if (status === "done") return <CheckCircle2 className="size-3 text-green-500" />;
+  if (status === "failed") return <XCircle className="size-3 text-destructive" />;
+  if (status === "uploading") return <Loader2 className="size-3 animate-spin text-blue-500" />;
+  return <RefreshCw className="size-3 text-muted-foreground" />;
 }
 
-function ChunkRow({ chunk, index }: { chunk: WavChunk; index: number }) {
-  const audioRef = useRef<HTMLAudioElement>(null);
-  const [playing, setPlaying] = useState(false);
-
-  const toggle = () => {
-    const el = audioRef.current;
-    if (!el) {
-      return;
-    }
-    if (playing) {
-      el.pause();
-      el.currentTime = 0;
-      setPlaying(false);
-    } else {
-      el.play();
-      setPlaying(true);
-    }
-  };
-
+function ChunkRow({ chunk, index }: { chunk: ChunkMeta; index: number }) {
   const download = () => {
+    if (!chunk.blobUrl) return;
     const a = document.createElement("a");
-    a.href = chunk.url;
+    a.href = chunk.blobUrl;
     a.download = `chunk-${index + 1}.wav`;
     a.click();
   };
 
   return (
-    <div className="flex items-center justify-between gap-3 rounded-sm border border-border/50 bg-muted/30 px-3 py-2">
-      <audio ref={audioRef} src={chunk.url} onEnded={() => setPlaying(false)} preload="none" />
+    <div className="flex items-center gap-3 rounded-sm border border-border/50 bg-muted/30 px-3 py-2">
+      <StatusIcon status={chunk.uploadStatus} />
       <span className="text-xs font-medium text-muted-foreground tabular-nums">#{index + 1}</span>
-      <span className="text-xs tabular-nums">{formatDuration(chunk.duration)}</span>
-      <span className="text-[10px] text-muted-foreground">16kHz PCM</span>
-      <div className="ml-auto flex gap-1">
-        <Button variant="ghost" size="icon-xs" onClick={toggle}>
-          {playing ? <Square className="size-3" /> : <Play className="size-3" />}
-        </Button>
-        <Button variant="ghost" size="icon-xs" onClick={download}>
+      <span className="text-xs tabular-nums">{chunk.duration.toFixed(1)}s</span>
+      <span className="text-[10px] text-muted-foreground">{(chunk.size / 1024).toFixed(0)} KB</span>
+      {chunk.transcript && (
+        <span className="flex-1 truncate text-[10px] text-muted-foreground italic">
+          {chunk.transcript}
+        </span>
+      )}
+      {chunk.errorMsg && !chunk.transcript && (
+        <span className="flex-1 truncate text-[10px] text-destructive" title={chunk.errorMsg}>
+          {chunk.errorMsg}
+        </span>
+      )}
+      {chunk.retries > 0 && (
+        <span className="text-[10px] text-yellow-500">retry {chunk.retries}</span>
+      )}
+      {chunk.blobUrl && (
+        <Button variant="ghost" size="icon-xs" onClick={download} className="ml-auto">
           <Download className="size-3" />
         </Button>
-      </div>
+      )}
     </div>
   );
 }
 
-export default function RecorderPage() {
-  const [deviceId] = useState<string | undefined>();
-  const { status, start, stop, pause, resume, chunks, elapsed, stream, clearChunks } = useRecorder({
-    chunkDuration: 5,
-    deviceId,
-  });
+// ─── Page ─────────────────────────────────────────────────────────────────────
 
+export default function RecorderPage() {
   const {
-    status: transcriptionStatus,
-    result,
-    error: transcriptionError,
-    progress,
-    transcribe,
-    reset: resetTranscription,
-  } = useTranscription();
+    status,
+    stream,
+    elapsed,
+    start,
+    stop,
+    pause,
+    resume,
+    chunks,
+    clearChunks,
+    pendingCount,
+    doneCount,
+    failedCount,
+    fullTranscript,
+    recovering,
+  } = useOpfsRecorder(5);
 
   const isRecording = status === "recording";
   const isPaused = status === "paused";
   const isActive = isRecording || isPaused;
 
   const handlePrimary = useCallback(() => {
-    if (isActive) {
-      stop();
-    } else {
-      start();
-    }
+    if (isActive) stop();
+    else start();
   }, [isActive, stop, start]);
-
-  const handleTranscribe = useCallback(() => {
-    if (chunks.length > 0) {
-      transcribe(chunks);
-    }
-  }, [chunks, transcribe]);
-
-  const handleClearAll = useCallback(() => {
-    clearChunks();
-    resetTranscription();
-  }, [clearChunks, resetTranscription]);
 
   return (
     <div className="container mx-auto flex max-w-lg flex-col items-center gap-6 px-4 py-8">
+      {/* Recovery banner */}
+      {recovering && (
+        <div className="flex w-full items-center gap-2 rounded-md border border-blue-500/30 bg-blue-500/10 px-4 py-2 text-sm text-blue-600 dark:text-blue-400">
+          <Loader2 className="size-3 animate-spin" />
+          Recovering unfinished uploads from previous session…
+        </div>
+      )}
+
+      {/* Recorder card */}
       <Card className="w-full">
         <CardHeader>
           <CardTitle>Recorder</CardTitle>
-          <CardDescription>16 kHz / 16-bit PCM WAV — chunked every 5 s</CardDescription>
+          <CardDescription>
+            16 kHz · 16-bit PCM WAV · 5 s chunks · 0.5 s overlap · OPFS-backed
+          </CardDescription>
         </CardHeader>
-
         <CardContent className="flex flex-col gap-6">
           {/* Waveform */}
-          <div className="overflow-hidden rounded-sm border border-border/50 bg-muted/20 text-foreground">
+          <div className="overflow-hidden rounded-sm border border-border/50 bg-muted/20">
             <LiveWaveform
               active={isRecording}
               processing={isPaused}
@@ -144,28 +152,32 @@ export default function RecorderPage() {
 
           {/* Controls */}
           <div className="flex items-center justify-center gap-3">
-            {/* Record / Stop */}
             <Button
               size="lg"
               variant={isActive ? "destructive" : "default"}
               className="gap-2 px-5"
               onClick={handlePrimary}
-              disabled={status === "requesting"}
+              disabled={status === "requesting" || status === "stopping"}
             >
-              {isActive ? (
+              {status === "requesting" ? (
                 <>
-                  <Square className="size-4" />
-                  Stop
+                  <Loader2 className="size-4 animate-spin" /> Requesting…
+                </>
+              ) : status === "stopping" ? (
+                <>
+                  <Loader2 className="size-4 animate-spin" /> Stopping…
+                </>
+              ) : isActive ? (
+                <>
+                  <Square className="size-4" /> Stop
                 </>
               ) : (
                 <>
-                  <Mic className="size-4" />
-                  {status === "requesting" ? "Requesting..." : "Record"}
+                  <Mic className="size-4" /> Record
                 </>
               )}
             </Button>
 
-            {/* Pause / Resume */}
             {isActive && (
               <Button
                 size="lg"
@@ -175,13 +187,11 @@ export default function RecorderPage() {
               >
                 {isPaused ? (
                   <>
-                    <Play className="size-4" />
-                    Resume
+                    <Play className="size-4" /> Resume
                   </>
                 ) : (
                   <>
-                    <Pause className="size-4" />
-                    Pause
+                    <Pause className="size-4" /> Pause
                   </>
                 )}
               </Button>
@@ -190,42 +200,32 @@ export default function RecorderPage() {
         </CardContent>
       </Card>
 
-      {/* Chunks */}
+      {/* Chunk list */}
       {chunks.length > 0 && (
         <Card className="w-full">
           <CardHeader>
             <CardTitle>Chunks</CardTitle>
-            <CardDescription>{chunks.length} recorded</CardDescription>
+            <CardDescription className="flex gap-3 text-xs">
+              <span>{chunks.length} total</span>
+              {doneCount > 0 && (
+                <span className="text-green-600 dark:text-green-400">{doneCount} uploaded</span>
+              )}
+              {pendingCount > 0 && (
+                <span className="text-blue-600 dark:text-blue-400">{pendingCount} pending</span>
+              )}
+              {failedCount > 0 && <span className="text-destructive">{failedCount} failed</span>}
+            </CardDescription>
           </CardHeader>
           <CardContent className="flex flex-col gap-2">
             {chunks.map((chunk, i) => (
-              <ChunkRow key={chunk.id} chunk={chunk} index={i} />
+              <ChunkRow key={`${chunk.sessionId}-${chunk.index}`} chunk={chunk} index={i} />
             ))}
-            <div className="mt-2 flex gap-2">
-              <Button
-                variant="default"
-                size="sm"
-                className="gap-1.5"
-                onClick={handleTranscribe}
-                disabled={transcriptionStatus === "transcribing"}
-              >
-                {transcriptionStatus === "transcribing" ? (
-                  <>
-                    <Loader2 className="size-3 animate-spin" />
-                    Transcribing {progress.current}/{progress.total}
-                  </>
-                ) : (
-                  <>
-                    <FileText className="size-3" />
-                    Transcribe
-                  </>
-                )}
-              </Button>
+            <div className="mt-2 flex justify-end">
               <Button
                 variant="ghost"
                 size="sm"
-                className="ml-auto gap-1.5 text-destructive"
-                onClick={handleClearAll}
+                className="gap-1.5 text-destructive"
+                onClick={clearChunks}
               >
                 <Trash2 className="size-3" />
                 Clear all
@@ -235,109 +235,26 @@ export default function RecorderPage() {
         </Card>
       )}
 
-      {/* Transcription Result */}
-      {transcriptionStatus === "done" && result && (
+      {/* Full transcript */}
+      {fullTranscript && (
         <Card className="w-full">
           <CardHeader>
             <CardTitle>Transcript</CardTitle>
             <CardDescription>
-              {result.language.toUpperCase()} • {result.audio_duration.toFixed(1)}s audio •{" "}
-              {result.duration_ms}ms processing • {result.segments.length} segments
+              Built live as chunks are acknowledged · {doneCount} / {chunks.length} chunks
             </CardDescription>
           </CardHeader>
           <CardContent className="flex flex-col gap-4">
-            {/* Full Text */}
             <div className="rounded-md border bg-muted/30 p-4">
-              <p className="whitespace-pre-wrap text-sm leading-relaxed">{result.text}</p>
+              <p className="whitespace-pre-wrap text-sm leading-relaxed">{fullTranscript}</p>
             </div>
-
-            {/* Validation Issues */}
-            {result.validation && !result.validation.valid && (
-              <div className="rounded-md border border-yellow-500/50 bg-yellow-500/10 p-3">
-                <p className="text-xs font-medium text-yellow-600 dark:text-yellow-400">
-                  Quality Issues:
-                </p>
-                <ul className="mt-1 list-inside list-disc text-xs text-yellow-600/80 dark:text-yellow-400/80">
-                  {result.validation.issues.map((issue, i) => (
-                    <li key={i}>{issue}</li>
-                  ))}
-                </ul>
-              </div>
-            )}
-
-            {/* Segments */}
-            <details className="group">
-              <summary className="cursor-pointer text-sm font-medium text-muted-foreground">
-                View Segments ({result.segments.length})
-              </summary>
-              <div className="mt-2 flex flex-col gap-1">
-                {result.segments.map((seg, i) => (
-                  <div
-                    key={i}
-                    className="flex gap-2 rounded-sm border border-border/30 bg-muted/20 px-2 py-1.5 text-xs"
-                  >
-                    <span className="font-mono text-muted-foreground tabular-nums">
-                      {seg.start.toFixed(1)}s - {seg.end.toFixed(1)}s
-                    </span>
-                    <span className="flex-1">{seg.text}</span>
-                  </div>
-                ))}
-              </div>
-            </details>
-
-            {/* Actions */}
-            <div className="flex gap-2">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => {
-                  navigator.clipboard.writeText(result.text);
-                }}
-              >
-                Copy Text
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => {
-                  const srt = result.segments
-                    .map((seg, i) => {
-                      const formatTime = (seconds: number) => {
-                        const h = Math.floor(seconds / 3600);
-                        const m = Math.floor((seconds % 3600) / 60);
-                        const s = Math.floor(seconds % 60);
-                        const ms = Math.floor((seconds % 1) * 1000);
-                        return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")},${String(ms).padStart(3, "0")}`;
-                      };
-                      return `${i + 1}\n${formatTime(seg.start)} --> ${formatTime(seg.end)}\n${seg.text}\n`;
-                    })
-                    .join("\n");
-                  const blob = new Blob([srt], { type: "text/plain" });
-                  const url = URL.createObjectURL(blob);
-                  const a = document.createElement("a");
-                  a.href = url;
-                  a.download = "transcript.srt";
-                  a.click();
-                  URL.revokeObjectURL(url);
-                }}
-              >
-                Download SRT
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
-      )}
-
-      {/* Transcription Error */}
-      {transcriptionStatus === "error" && transcriptionError && (
-        <Card className="w-full border-destructive">
-          <CardHeader>
-            <CardTitle className="text-destructive">Transcription Error</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className="text-sm text-muted-foreground">{transcriptionError}</p>
-            <Button variant="outline" size="sm" className="mt-3" onClick={resetTranscription}>
-              Try Again
+            <Button
+              variant="outline"
+              size="sm"
+              className="w-fit"
+              onClick={() => navigator.clipboard.writeText(fullTranscript)}
+            >
+              Copy
             </Button>
           </CardContent>
         </Card>
