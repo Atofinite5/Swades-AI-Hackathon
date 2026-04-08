@@ -21,53 +21,45 @@ function calculateSNR(pcm: Float32Array): number {
 }
 
 /**
- * English context prompt fed to Whisper before transcription.
- * More specific guidance improves punctuation, capitalisation, and reduces
- * hallucinations on short or quiet segments.
+ * Short stylistic conditioning fed to Whisper. The Whisper `prompt` parameter
+ * is meant for style/spelling cues, NOT instructions — long instruction-style
+ * prompts confuse the model and degrade output.
  */
-const ENGLISH_CONTEXT_PROMPT =
-  "This is a clear spoken English recording. " +
-  "Transcribe exactly what is said with accurate punctuation, " +
-  "proper capitalisation, and natural sentence breaks. " +
-  "Preserve filler words such as 'um' and 'uh' if present. " +
-  "Do not summarise, paraphrase, interpret, or add any commentary.";
+const ENGLISH_CONTEXT_PROMPT = "Hello. The following is a clear English recording.";
 
 /**
- * Minimum confidence threshold — segments with avg_logprob below this are
- * likely noise or hallucinated text and should be discarded.
+ * Whisper's standard thresholds. Anything stricter silently drops real speech.
  */
-const MIN_AVG_LOGPROB = -1;
+const MIN_AVG_LOGPROB = -2;
+const MAX_NO_SPEECH_PROB = 0.8;
 
 /**
- * Maximum no-speech probability — segments above this threshold are likely
- * silence or background noise, not actual speech.
+ * Multi-word phrases Whisper hallucinates over silence (typically YouTube
+ * subtitle artefacts). Single common words like "you", "sh", "hmm", "bye"
+ * are intentionally NOT in this list — they are real speech.
+ *
+ * Match is exact (after normalization), never substring.
  */
-const MAX_NO_SPEECH_PROB = 0.45;
-
-/**
- * Patterns that Whisper frequently hallucinations during silence.
- */
-const HALLUCINATION_PATTERNS = [
-  "you",
-  "thank you",
+const HALLUCINATION_PATTERNS = new Set([
+  "thank you for watching",
   "thanks for watching",
   "please subscribe",
-  "subtitles by",
-  "be sure to",
+  "please subscribe to my channel",
+  "please like and subscribe",
+  "subtitles by the amara org community",
+  "subtitles by amara org",
   "see you in the next one",
-  "bye",
-  "sh",
-  "hmm",
-];
+  "see you next time",
+  "bye bye bye",
+]);
 
 function isHallucination(text: string): boolean {
   const normalized = text
     .toLowerCase()
     .replaceAll(/[.,!?;]/g, "")
+    .replaceAll(/\s+/g, " ")
     .trim();
-  return HALLUCINATION_PATTERNS.some(
-    (p) => normalized === p || (normalized.includes(p) && normalized.length < p.length + 5),
-  );
+  return HALLUCINATION_PATTERNS.has(normalized);
 }
 
 interface GroqVerboseSegment {
@@ -252,23 +244,10 @@ export async function transcribeWithGroq(
     };
   }
 
-  // Deduplication logic for overlapping segments
-  const seenTexts = new Set<string>();
-  const deduplicatedSegments = raw.segments.filter((s) => {
-    const text = s.text
-      .trim()
-      .toLowerCase()
-      .replaceAll(/[^\w\s]/g, "");
-    if (!text || (seenTexts.has(text) && s.avg_logprob < -0.3)) {
-      return false;
-    }
-    seenTexts.add(text);
-    return true;
-  });
-
-  // Filter out silent/noisy segments and low-confidence hallucinations,
-  // then rebuild the full text from the kept segments for consistency.
-  const filteredSegments = deduplicatedSegments
+  // Drop only segments that are clearly silence/noise or known YouTube
+  // hallucinations. Do NOT dedup by text — repeating the same word is valid
+  // speech (e.g. "yes yes yes").
+  const filteredSegments = raw.segments
     .filter((s) => s.no_speech_prob < MAX_NO_SPEECH_PROB)
     .filter((s) => s.avg_logprob > MIN_AVG_LOGPROB)
     .filter((s) => !isHallucination(s.text))

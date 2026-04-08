@@ -1,0 +1,26 @@
+import { env } from "@my-better-t-app/env/server";
+import { Hono } from "hono";
+import { cors } from "hono/cors";
+import { logger } from "hono/logger";
+import { chunksApp } from "./chunks";
+import { finalizeApp } from "./finalize";
+import { transcribeApp } from "./transcribe";
+
+const app = new Hono();
+
+app.use(logger());
+app.use(
+  "/*",
+  cors({
+    allowMethods: ["GET", "POST", "OPTIONS"],
+    origin: env.CORS_ORIGIN,
+  }),
+);
+
+app.get("/", (c) => c.text("OK"));
+
+app.route("/transcribe", transcribeApp);
+app.route("/api/chunks", chunksApp);
+app.route("/api/sessions", finalizeApp);
+
+export default app;

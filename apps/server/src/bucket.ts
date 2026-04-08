@@ -5,7 +5,7 @@
  * All operations are safe to call concurrently.
  */
 
-import { HeadObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
+import { GetObjectCommand, HeadObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import { env } from "@my-better-t-app/env/server";
 
 // ─── Singleton S3 client ──────────────────────────────────────────────────────
@@ -38,6 +38,15 @@ export async function uploadToBucket(key: string, body: ArrayBuffer): Promise<st
     }),
   );
   return key;
+}
+
+/**
+ * Download an object from MinIO and return its raw bytes.
+ */
+export async function getFromBucket(key: string): Promise<ArrayBuffer> {
+  const response = await s3.send(new GetObjectCommand({ Bucket: BUCKET, Key: key }));
+  if (!response.Body) throw new Error(`Empty body for bucket key: ${key}`);
+  return (response.Body as unknown as { transformToArrayBuffer(): Promise<ArrayBuffer> }).transformToArrayBuffer();
 }
 
 /**

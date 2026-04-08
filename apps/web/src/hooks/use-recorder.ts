@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 const SAMPLE_RATE = 16_000;
-const BUFFER_SIZE = 4096;
 
 export interface WavChunk {
   id: string;
@@ -44,7 +43,7 @@ function encodeWav(samples: Float32Array, sampleRate: number): Blob {
 
   for (let i = 0; i < samples.length; i++) {
     const s = Math.max(-1, Math.min(1, samples[i]));
-    view.setInt16(44 + i * 2, s < 0 ? s * 0x80_00 : s * 0x7FFF, true);
+    view.setInt16(44 + i * 2, s < 0 ? s * 0x80_00 : s * 0x7fff, true);
   }
 
   return new Blob([buffer], { type: "audio/wav" });
@@ -77,7 +76,7 @@ export function useRecorder(options: UseRecorderOptions = {}) {
 
   const streamRef = useRef<MediaStream | null>(null);
   const audioCtxRef = useRef<AudioContext | null>(null);
-  const processorRef = useRef<ScriptProcessorNode | null>(null);
+  const processorRef = useRef<AudioWorkletNode | null>(null);
   const samplesRef = useRef<Float32Array[]>([]);
   const sampleCountRef = useRef(0);
   const chunkThreshold = SAMPLE_RATE * chunkDuration;
@@ -129,23 +128,23 @@ export function useRecorder(options: UseRecorderOptions = {}) {
       });
 
       const audioCtx = new AudioContext();
-      const source = audioCtx.createMediaStreamSource(mediaStream);
-      const processor = audioCtx.createScriptProcessor(BUFFER_SIZE, 1, 1);
       const nativeSampleRate = audioCtx.sampleRate;
 
-      processor.onaudioprocess = (e) => {
+      await audioCtx.audioWorklet.addModule("/recorder-processor.js");
+      const processor = new AudioWorkletNode(audioCtx, "recorder-processor");
+      const source = audioCtx.createMediaStreamSource(mediaStream);
+
+      processor.port.onmessage = (e: MessageEvent<{ samples: Float32Array }>) => {
         if (statusRef.current !== "recording") {
           return;
         }
 
-        const input = e.inputBuffer.getChannelData(0);
-        const resampled = resample(new Float32Array(input), nativeSampleRate, SAMPLE_RATE);
+        const resampled = resample(e.data.samples, nativeSampleRate, SAMPLE_RATE);
 
         samplesRef.current.push(resampled);
         sampleCountRef.current += resampled.length;
 
         if (sampleCountRef.current >= chunkThreshold) {
-          // flush synchronously from the collected buffers
           const totalLen = samplesRef.current.reduce((n, b) => n + b.length, 0);
           const merged = new Float32Array(totalLen);
           let off = 0;
@@ -244,7 +243,9 @@ export function useRecorder(options: UseRecorderOptions = {}) {
       if (audioCtxRef.current?.state !== "closed") {
         audioCtxRef.current?.close();
       }
-      if (timerRef.current) {clearInterval(timerRef.current);}
+      if (timerRef.current) {
+        clearInterval(timerRef.current);
+      }
     },
     [],
   );

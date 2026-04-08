@@ -23,8 +23,8 @@ import { env } from "@my-better-t-app/env/web";
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 const SAMPLE_RATE = 16_000;
-const CHUNK_DURATION = 5; // seconds
-const OVERLAP_DURATION = 0.5; // seconds — kept from previous chunk
+const CHUNK_DURATION = 5; // seconds — small for fast upload + OPFS durability; server re-segments for transcription
+const OVERLAP_DURATION = 0; // no overlap — server transcribes each chunk independently, so any overlap creates duplicate words at boundaries
 const OVERLAP_SAMPLES = Math.floor(SAMPLE_RATE * OVERLAP_DURATION);
 const MAX_RETRIES = 3;
 const UPLOAD_CONCURRENCY = 1; // sequential — one Groq request at a time
@@ -181,12 +181,30 @@ async function uploadChunk(
 
 // ─── Hook ─────────────────────────────────────────────────────────────────────
 
+export interface FinalTranscriptWord {
+  word: string;
+  start: number;
+  end: number;
+}
+
+export interface FinalTranscript {
+  sessionId: string;
+  transcript: string;
+  words: FinalTranscriptWord[];
+  durationS: number;
+  segmentCount: number;
+  chunkCount: number;
+  elapsed_ms: number;
+}
+
 export function useOpfsRecorder(chunkDuration = CHUNK_DURATION) {
   const [status, setStatus] = useState<RecorderStatus>("idle");
   const [chunks, setChunks] = useState<ChunkMeta[]>([]);
   const [elapsed, setElapsed] = useState(0);
   const [stream, setStream] = useState<MediaStream | null>(null);
   const [recovering, setRecovering] = useState(false);
+  const [finalizing, setFinalizing] = useState(false);
+  const [finalTranscript, setFinalTranscript] = useState<FinalTranscript | null>(null);
 
   // Refs — stable across renders
   const workerRef = useRef<Worker | null>(null);
@@ -600,6 +618,33 @@ export function useOpfsRecorder(chunkDuration = CHUNK_DURATION) {
     [],
   );
 
+  // ── Finalize — high-quality re-transcription of full session ──────────────
+
+  const finalize = useCallback(async (sessionIdOverride?: string): Promise<FinalTranscript | null> => {
+    const sid = sessionIdOverride ?? sessionIdRef.current;
+    if (!sid) return null;
+    setFinalizing(true);
+    try {
+      const res = await fetch(`${env.NEXT_PUBLIC_SERVER_URL}/api/sessions/${sid}/finalize`, {
+        method: "POST",
+      });
+      if (!res.ok) {
+        const raw = await res.text().catch(() => "");
+        let msg = `Finalize HTTP ${res.status}`;
+        try { const j = JSON.parse(raw) as { error?: string }; if (j.error) msg = j.error; } catch { /* ignore */ }
+        throw new Error(msg);
+      }
+      const data = (await res.json()) as FinalTranscript;
+      setFinalTranscript(data);
+      return data;
+    } catch (err) {
+      console.error("[finalize]", err instanceof Error ? err.message : String(err));
+      return null;
+    } finally {
+      setFinalizing(false);
+    }
+  }, []);
+
   // ── Derived state ──────────────────────────────────────────────────────────
 
   const pendingCount = chunks.filter(
@@ -629,5 +674,8 @@ export function useOpfsRecorder(chunkDuration = CHUNK_DURATION) {
     failedCount,
     fullTranscript,
     recovering,
+    finalize,
+    finalizing,
+    finalTranscript,
   };
 }

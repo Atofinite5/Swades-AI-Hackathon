@@ -97,7 +97,7 @@ export default function RecorderPage() {
     failedCount,
     fullTranscript,
     recovering,
-  } = useOpfsRecorder(5);
+  } = useOpfsRecorder(15);
 
   const isRecording = status === "recording";
   const isPaused = status === "paused";
@@ -123,7 +123,7 @@ export default function RecorderPage() {
         <CardHeader>
           <CardTitle>Recorder</CardTitle>
           <CardDescription>
-            16 kHz · 16-bit PCM WAV · 5 s chunks · 0.5 s overlap · OPFS-backed
+            16 kHz · 16-bit PCM WAV · 15 s chunks · OPFS-backed
           </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-6">
