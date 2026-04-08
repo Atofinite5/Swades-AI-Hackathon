@@ -1,0 +1,6 @@
+{
+  "framework": "nextjs",
+  "installCommand": "cd ../.. && npm install --include=dev",
+  "buildCommand": "cd ../.. && npm run build:vercel --workspace=server && npm run build --workspace=web",
+  "outputDirectory": ".next"
+}

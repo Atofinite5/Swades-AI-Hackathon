@@ -33,7 +33,7 @@ export function useTranscription() {
       const formData = new FormData();
       formData.append("audio", chunk.blob, `${chunk.id}.wav`);
 
-      const response = await fetch(`${env.NEXT_PUBLIC_SERVER_URL}/transcribe`, {
+      const response = await fetch(`${env.NEXT_PUBLIC_SERVER_URL}/api/transcribe`, {
         body: formData,
         method: "POST",
       });
